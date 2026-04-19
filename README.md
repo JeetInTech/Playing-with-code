@@ -20,16 +20,17 @@ _Real-time hand tracking • Audio-reactive visuals • Medical X-ray simulation
 
 **Hands Connect** is a collection of cutting-edge, browser-based augmented reality experiences built entirely with vanilla HTML5, JavaScript, CSS, and GPU shaders. The project pushes the boundaries of what's possible in the browser by combining Google's **MediaPipe** hand/body tracking with the **Web Audio API**, **WebGL**, and **HTML5 Canvas** to create immersive, interactive, and visually stunning experiments.
 
-Every experience runs in real-time at 60fps, requires **zero installation**, and works directly in modern browsers (Chrome/Edge recommended).
+Every experience is designed for real-time rendering (often near 60fps on capable hardware), requires **zero installation**, and works directly in modern browsers (Chrome/Edge recommended).
 
 ---
 
 ## 📂 Complete File Manifest
 
 ```
-hands-connect/
+hands connect/
 │
 ├── README.md                              # This documentation file
+├── LICENSE                                # MIT license
 ├── PROJECTS_DETAILED.md                   # Additional project notes
 │
 ├── hands.html                             # Core AR hand tracker with audio engine
@@ -351,7 +352,7 @@ npx serve .
 # Install "Live Server" extension → Right-click any .html → "Open with Live Server"
 ```
 
-Then navigate to `http://localhost:5500/hands.html` (or whichever file you want).
+Then navigate to `http://localhost:5500/` and open `hands.html` (or whichever file you want).
 
 ### System Requirements
 
@@ -442,7 +443,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-**In plain English:** You are free to copy, modify, distribute, and use this code for any purpose — personal, educational, or commercial — without restriction. No permission or attribution required. Enjoy! 🚀
+**In plain English:** You are free to use, copy, modify, and distribute this project (including commercially). The main requirement is to keep the MIT license notice in copies/substantial portions of the software. Enjoy! 🚀
 
 ---
 
