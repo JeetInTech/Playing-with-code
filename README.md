@@ -1,5 +1,3 @@
-<![CDATA[<div align="center">
-
 # ✦ HANDS CONNECT ✦
 
 ### Advanced Interactive AR Visualizer Suite
@@ -14,7 +12,6 @@ _Real-time hand tracking • Audio-reactive visuals • Medical X-ray simulation
 
 ---
 
-</div>
 
 ## 🌟 Overview
 
@@ -447,9 +444,5 @@ SOFTWARE.
 
 ---
 
-<div align="center">
 
 _Built with 🖐️ hands, 🎵 sound, and ☕ caffeine._
-
-</div>
-]]>
