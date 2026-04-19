@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Twin Window Black Hole Sphere</title>
+  <style>
+    :root {
+      --bg-0: #03040a;
+      --bg-1: #0a0f1f;
+      --ink: #e9f5ff;
+      --muted: #9db5c7;
+      --accent: #6bf7ff;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      color: var(--ink);
+      font-family: "Segoe UI", "Helvetica Neue", sans-serif;
+      background:
+        radial-gradient(1200px 700px at 20% 10%, #112038 0%, transparent 55%),
+        radial-gradient(1000px 700px at 85% 80%, #2a113a 0%, transparent 60%),
+        linear-gradient(140deg, var(--bg-0), var(--bg-1));
+    }
+
+    #c {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+  </style>
+</head>
+<body>
+  <canvas id="c"></canvas>
+
+  <script>
+    (() => {
+      const canvas = document.getElementById("c");
+      const ctx = canvas.getContext("2d");
+
+      let w = 0;
+      let h = 0;
+      let dpr = 1;
+      let cx = 0;
+      let cy = 0;
+
+      const id = crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2);
+      const bornAt = Date.now();
+      const channelName = "twin-blackhole-channel-v2";
+      const bc = ("BroadcastChannel" in window) ? new BroadcastChannel(channelName) : null;
+
+      const peers = new Map();
+      const PEER_TTL_MS = 2500;
+      let lastSentState = null;
+
+      const particleCount = 3000;
+      const sphereRadiusBase = 165;
+      const fov = 760;
+      const camZ = 900;
+
+      const px = new Float32Array(particleCount);
+      const py = new Float32Array(particleCount);
+      const pz = new Float32Array(particleCount);
+      const vx = new Float32Array(particleCount);
+      const vy = new Float32Array(particleCount);
+      const vz = new Float32Array(particleCount);
+      const tx = new Float32Array(particleCount);
+      const ty = new Float32Array(particleCount);
+      const tz = new Float32Array(particleCount);
+      const twinkle = new Float32Array(particleCount);
+
+      const starCount = 500;
+      const stars = new Array(starCount);
+
+      const golden = Math.PI * (3 - Math.sqrt(5));
+      let rot = 0;
+      let t = 0;
+      let bhWorldX = 0;
+      let bhWorldY = 0;
+      let bhWorldVx = 0;
+      let bhWorldVy = 0;
+      let lensStrength = 0;
+      const trail = []; // Stored in world space
+
+      function clamp(v, min, max) {
+        return Math.max(min, Math.min(max, v));
+      }
+
+      function resize() {
+        dpr = window.devicePixelRatio || 1;
+        w = window.innerWidth;
+        h = window.innerHeight;
+        cx = w * 0.5;
+        cy = h * 0.5;
+        canvas.width = Math.floor(w * dpr);
+        canvas.height = Math.floor(h * dpr);
+        canvas.style.width = w + "px";
+        canvas.style.height = h + "px";
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      }
+
+      function initStars() {
+        for (let i = 0; i < starCount; i++) {
+          stars[i] = {
+            x: Math.random() * w,
+            y: Math.random() * h,
+            size: Math.random() * 1.5 + 0.3,
+            alpha: 0.2 + Math.random() * 0.65,
+            phase: Math.random() * Math.PI * 2,
+          };
+        }
+      }
+
+      function initParticles() {
+        const r = Math.min(w, h) * 0.2 + sphereRadiusBase;
+        for (let i = 0; i < particleCount; i++) {
+          const y = 1 - (i / (particleCount - 1)) * 2;
+          const rr = Math.sqrt(1 - y * y);
+          const th = golden * i;
+
+          tx[i] = Math.cos(th) * rr * r;
+          ty[i] = y * r;
+          tz[i] = Math.sin(th) * rr * r;
+
+          px[i] = (Math.random() - 0.5) * w * 0.5;
+          py[i] = (Math.random() - 0.5) * h * 0.5;
+          pz[i] = (Math.random() - 0.5) * r * 2;
+
+          vx[i] = 0;
+          vy[i] = 0;
+          vz[i] = 0;
+          twinkle[i] = Math.random() * Math.PI * 2;
+        }
+      }
+
+      function getWindowCenterWorld() {
+        const sx = Number.isFinite(window.screenX) ? window.screenX : 0;
+        const sy = Number.isFinite(window.screenY) ? window.screenY : 0;
+        return {
+          x: sx + (window.outerWidth || w) * 0.5,
+          y: sy + (window.outerHeight || h) * 0.5,
+        };
+      }
+
+      function getViewportWorldOrigin() {
+        const sx = Number.isFinite(window.screenX) ? window.screenX : 0;
+        const sy = Number.isFinite(window.screenY) ? window.screenY : 0;
+        const insetX = Math.max(0, ((window.outerWidth || w) - window.innerWidth) * 0.5);
+        const insetY = Math.max(0, (window.outerHeight || h) - window.innerHeight);
+        return { x: sx + insetX, y: sy + insetY };
+      }
+
+      function worldToLocal(wx, wy) {
+        const origin = getViewportWorldOrigin();
+        return { x: wx - origin.x, y: wy - origin.y };
+      }
+
+      function postState() {
+        const now = Date.now();
+        const pos = getWindowCenterWorld();
+
+        let velX = 0;
+        let velY = 0;
+        if (lastSentState) {
+          const dt = Math.max(1, now - lastSentState.now) / 1000;
+          velX = (pos.x - lastSentState.x) / dt;
+          velY = (pos.y - lastSentState.y) / dt;
+        }
+
+        const payload = {
+          kind: "state",
+          id,
+          bornAt,
+          now,
+          x: pos.x,
+          y: pos.y,
+          vx: velX,
+          vy: velY,
+          w: window.outerWidth || w,
+          h: window.outerHeight || h,
+        };
+        lastSentState = payload;
+
+        if (bc) {
+          bc.postMessage(payload);
+        } else {
+          localStorage.setItem(channelName, JSON.stringify(payload));
+        }
+      }
+
+      function onPeerMessage(payload) {
+        if (!payload || payload.kind !== "state") return;
+        if (payload.id === id) return;
+        peers.set(payload.id, payload);
+      }
+
+      if (bc) {
+        bc.onmessage = (ev) => onPeerMessage(ev.data);
+      } else {
+        window.addEventListener("storage", (ev) => {
+          if (ev.key !== channelName || !ev.newValue) return;
+          try {
+            onPeerMessage(JSON.parse(ev.newValue));
+          } catch (_) {
+            // Ignore malformed storage payload.
+          }
+        });
+      }
+
+      function getActiveBodies(now) {
+        const active = [];
+        const self = getWindowCenterWorld();
+        active.push({ id, x: self.x, y: self.y, w: window.outerWidth || w, h: window.outerHeight || h });
+
+        for (const [peerId, p] of peers.entries()) {
+          if (!p || now - p.now > PEER_TTL_MS) {
+            peers.delete(peerId);
+            continue;
+          }
+          active.push({ id: peerId, x: p.x, y: p.y, w: p.w || w, h: p.h || h });
+        }
+        return active;
+      }
+
+      function update(dt, now) {
+        t += dt;
+        rot += dt * 0.7;
+
+        const active = getActiveBodies(now);
+        let targetX = 0;
+        let targetY = 0;
+        for (let i = 0; i < active.length; i++) {
+          targetX += active[i].x;
+          targetY += active[i].y;
+        }
+        targetX /= active.length;
+        targetY /= active.length;
+
+        if (bhWorldX === 0 && bhWorldY === 0) {
+          bhWorldX = targetX;
+          bhWorldY = targetY;
+        }
+
+        bhWorldVx += (targetX - bhWorldX) * dt * 6.8;
+        bhWorldVy += (targetY - bhWorldY) * dt * 6.8;
+        bhWorldVx *= 0.86;
+        bhWorldVy *= 0.86;
+        bhWorldX += bhWorldVx;
+        bhWorldY += bhWorldVy;
+
+        let avgDist = 0;
+        for (let i = 0; i < active.length; i++) {
+          const dx = active[i].x - bhWorldX;
+          const dy = active[i].y - bhWorldY;
+          avgDist += Math.hypot(dx, dy);
+        }
+        avgDist /= active.length;
+        lensStrength += (clamp(0.35 + avgDist / 1100, 0.25, 1.35) - lensStrength) * 0.06;
+
+        trail.unshift({ x: bhWorldX, y: bhWorldY, life: 1 });
+        if (trail.length > 30) trail.pop();
+        for (let i = 0; i < trail.length; i++) trail[i].life *= 0.965;
+
+        const sr = Math.sin(rot);
+        const cr = Math.cos(rot);
+
+        for (let i = 0; i < particleCount; i++) {
+          const rx = tx[i] * cr - tz[i] * sr;
+          const rz = tx[i] * sr + tz[i] * cr;
+
+          const targetX = rx;
+          const targetY = ty[i];
+          const targetZ = rz;
+
+          vx[i] += (targetX - px[i]) * 0.038;
+          vy[i] += (targetY - py[i]) * 0.038;
+          vz[i] += (targetZ - pz[i]) * 0.038;
+
+          vx[i] *= 0.9;
+          vy[i] *= 0.9;
+          vz[i] *= 0.9;
+
+          px[i] += vx[i];
+          py[i] += vy[i];
+          pz[i] += vz[i];
+        }
+
+      }
+
+      function drawBackground() {
+        const localCenter = worldToLocal(bhWorldX, bhWorldY);
+        const x = localCenter.x;
+        const y = localCenter.y;
+
+        ctx.fillStyle = "rgba(1, 3, 9, 0.4)";
+        ctx.fillRect(0, 0, w, h);
+
+        for (let i = 0; i < trail.length; i++) {
+          const tr = trail[i];
+          const a = tr.life * (1 - i / Math.max(1, trail.length));
+          const lp = worldToLocal(tr.x, tr.y);
+          const gx = lp.x;
+          const gy = lp.y;
+          const grad = ctx.createRadialGradient(gx, gy, 0, gx, gy, 170);
+          grad.addColorStop(0, "rgba(120, 185, 255," + (0.05 * a) + ")");
+          grad.addColorStop(1, "rgba(60, 120, 255,0)");
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(gx, gy, 170, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        const lensRadius = 220;
+        for (let i = 0; i < starCount; i++) {
+          const s = stars[i];
+          let sx = s.x;
+          let sy = s.y;
+          const dx = sx - x;
+          const dy = sy - y;
+          const d = Math.hypot(dx, dy);
+
+          if (d < lensRadius) {
+            const bend = (1 - d / lensRadius) * lensStrength * 18;
+            sx += (dx / Math.max(1, d)) * bend;
+            sy += (dy / Math.max(1, d)) * bend;
+          }
+
+          const tw = 0.6 + 0.4 * Math.sin(t * 1.6 + s.phase);
+          ctx.fillStyle = "rgba(210,230,255," + (s.alpha * tw) + ")";
+          ctx.beginPath();
+          ctx.arc(sx, sy, s.size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      function drawAccretionDisk(x, y) {
+        const ringTilt = 0.33 + Math.sin(t * 0.6) * 0.03;
+        const diskSpin = t * 2.2;
+
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(diskSpin * 0.12);
+        ctx.scale(1, ringTilt);
+
+        for (let i = 0; i < 7; i++) {
+          const r = 78 + i * 9;
+          const a = 0.15 - i * 0.016;
+          ctx.strokeStyle = "rgba(255,170,80," + a + ")";
+          ctx.lineWidth = 5 - i * 0.45;
+          ctx.beginPath();
+          ctx.arc(0, 0, r, diskSpin + i * 0.42, diskSpin + i * 0.42 + Math.PI * 1.2);
+          ctx.stroke();
+        }
+
+        for (let i = 0; i < 180; i++) {
+          const ang = (i / 180) * Math.PI * 2 + diskSpin;
+          const rr = 92 + Math.sin(i * 1.7 + t * 6) * 13;
+          const px = Math.cos(ang) * rr;
+          const py = Math.sin(ang) * rr;
+          const glow = 0.3 + 0.7 * Math.sin(i * 0.37 + t * 10) * 0.5;
+          ctx.fillStyle = "rgba(255,200,120," + clamp(glow, 0.08, 0.55) + ")";
+          ctx.fillRect(px, py, 1.7, 1.7);
+        }
+
+        ctx.restore();
+      }
+
+      function drawBlackHole() {
+        const localCenter = worldToLocal(bhWorldX, bhWorldY);
+        const x = localCenter.x;
+        const y = localCenter.y;
+
+        const gravityAura = ctx.createRadialGradient(x, y, 16, x, y, 250);
+        gravityAura.addColorStop(0, "rgba(10, 14, 26, 0.95)");
+        gravityAura.addColorStop(0.2, "rgba(8, 14, 30, 0.82)");
+        gravityAura.addColorStop(0.55, "rgba(18, 60, 130, 0.25)");
+        gravityAura.addColorStop(1, "rgba(0, 0, 0, 0)");
+        ctx.fillStyle = gravityAura;
+        ctx.beginPath();
+        ctx.arc(x, y, 250, 0, Math.PI * 2);
+        ctx.fill();
+
+        drawAccretionDisk(x, y);
+
+        ctx.fillStyle = "rgba(0, 0, 0, 0.98)";
+        ctx.beginPath();
+        ctx.arc(x, y, 48, 0, Math.PI * 2);
+        ctx.fill();
+
+        const photon = ctx.createRadialGradient(x, y, 48, x, y, 92);
+        photon.addColorStop(0, "rgba(255, 220, 165, 0.82)");
+        photon.addColorStop(0.28, "rgba(255, 165, 95, 0.28)");
+        photon.addColorStop(1, "rgba(255, 140, 80, 0)");
+        ctx.fillStyle = photon;
+        ctx.beginPath();
+        ctx.arc(x, y, 92, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.strokeStyle = "rgba(255, 210, 150, 0.58)";
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(x, y, 54 + Math.sin(t * 2.8) * 1.6, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      function drawParticles() {
+        const localCenter = worldToLocal(bhWorldX, bhWorldY);
+        for (let i = 0; i < particleCount; i++) {
+          const z = pz[i] + camZ;
+          if (z < 20) continue;
+          const s = fov / z;
+          const x = localCenter.x + px[i] * s;
+          const y = localCenter.y + py[i] * s;
+
+          if (x < -6 || x > w + 6 || y < -6 || y > h + 6) continue;
+
+          const tw = 0.55 + 0.45 * Math.sin(t * 4.2 + twinkle[i]);
+          const r = Math.max(0.35, 1.4 * s * tw);
+          const a = Math.min(1, 0.1 + 0.6 * s);
+
+          ctx.fillStyle = "rgba(140, 205, 255," + a + ")";
+          ctx.beginPath();
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      let last = performance.now();
+      function loop(now) {
+        const dt = Math.min(0.033, (now - last) / 1000);
+        last = now;
+
+        update(dt, Date.now());
+        drawBackground();
+        drawParticles();
+        drawBlackHole();
+
+        requestAnimationFrame(loop);
+      }
+
+      resize();
+      initStars();
+      initParticles();
+      window.addEventListener("resize", () => {
+        resize();
+        initStars();
+      });
+
+      setInterval(postState, 60);
+      postState();
+      requestAnimationFrame(loop);
+
+      window.addEventListener("beforeunload", () => {
+        if (bc) bc.close();
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Audio-Reactive Singularity — Hand Energy</title>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: #000; font-family: 'Outfit', sans-serif; user-select: none;
+    }
+    video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
+    canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+    /* Audio controls */
+    #audioPanel {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: center; gap: 12px;
+      padding: 12px 20px;
+      background: linear-gradient(180deg, rgba(0,0,0,0.7) 0%, rgba(0,0,0,0) 100%);
+      transition: opacity 0.4s;
+    }
+    #audioPanel.hidden { opacity: 0; pointer-events: none; }
+    #audioPanel button {
+      background: rgba(255, 140, 40, 0.1); border: 1px solid rgba(255, 160, 60, 0.25);
+      color: rgba(255, 200, 140, 0.85); padding: 7px 18px; border-radius: 8px;
+      cursor: pointer; font-family: inherit; font-size: 12px; letter-spacing: 1px;
+      transition: all 0.25s;
+    }
+    #audioPanel button:hover {
+      background: rgba(255, 140, 40, 0.25); border-color: rgba(255, 160, 60, 0.5);
+      transform: translateY(-1px);
+    }
+    #audioPanel button.active {
+      background: rgba(255, 140, 40, 0.3); border-color: rgba(255, 180, 80, 0.6);
+      color: #fff; box-shadow: 0 0 20px rgba(255, 140, 40, 0.25);
+    }
+    #audioPanel .sep { color: rgba(255, 160, 60, 0.3); font-size: 18px; }
+
+    /* HUD */
+    #hud {
+      position: fixed; bottom: 14px; left: 16px; z-index: 15;
+      color: rgba(255, 200, 140, 0.5); font-size: 10px; letter-spacing: 1.5px;
+      line-height: 1.8; font-family: 'Courier New', monospace;
+    }
+    #hud .val { color: rgba(255, 220, 160, 0.8); }
+
+    /* Frequency bars */
+    #freqBars {
+      position: fixed; bottom: 14px; right: 16px; z-index: 15;
+      display: flex; gap: 6px; align-items: flex-end; height: 60px;
+    }
+    .freq-bar { width: 8px; border-radius: 4px 4px 0 0; min-height: 3px; transition: height 0.05s; }
+    .freq-bar.bass { background: linear-gradient(180deg, #ff6030, #a03020); }
+    .freq-bar.mid { background: linear-gradient(180deg, #ff9030, #a06010); }
+    .freq-bar.high { background: linear-gradient(180deg, #ffd060, #a08020); }
+    .freq-label { color: rgba(255,200,140,0.4); font-size: 8px; letter-spacing: 1px; text-align: center; font-family: 'Courier New', monospace; }
+    .freq-group { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+
+    /* Loader */
+    #loader {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 25;
+      color: rgba(255, 180, 80, 0.9); font-size: 15px; letter-spacing: 3px; text-align: center; line-height: 2;
+    }
+    #loader.hidden { display: none; }
+
+    /* Drop zone */
+    #dropZone {
+      position: fixed; inset: 0; z-index: 30; display: none;
+      align-items: center; justify-content: center; background: rgba(0,0,0,0.8);
+    }
+    #dropZone.active { display: flex; }
+    #dropZone span {
+      color: rgba(255,200,140,0.8); font-size: 16px; letter-spacing: 3px;
+      border: 2px dashed rgba(255,160,60,0.3); padding: 40px 60px; border-radius: 16px;
+    }
+
+    audio { display: none; }
+  </style>
+</head>
+<body>
+  <video id="vid" autoplay playsinline muted></video>
+  <canvas id="cv"></canvas>
+
+  <div id="loader">INITIALIZING HAND ENGINE...<br><span style="font-size:11px;color:rgba(255,140,60,0.7)">MediaPipe Hands + Audio Analyzer</span></div>
+
+  <div id="audioPanel">
+    <button id="btnMic">🎤 MIC</button>
+    <span class="sep">|</span>
+    <button id="btnScreen">🖥 SYSTEM AUDIO</button>
+    <span class="sep">|</span>
+    <button id="btnFile">🎵 AUDIO FILE</button>
+    <input type="file" id="fileInput" accept="audio/*" style="display:none" />
+  </div>
+
+  <div id="dropZone"><span>DROP AUDIO FILE HERE</span></div>
+  <audio id="audioEl" crossorigin="anonymous"></audio>
+
+  <div id="hud">
+    <div>BASS <span class="val" id="hBass">0.00</span></div>
+    <div>MIDS <span class="val" id="hMid">0.00</span></div>
+    <div>HIGH <span class="val" id="hHigh">0.00</span></div>
+    <div style="margin-top:3px">MODE <span class="val" id="hMode">STANDBY</span></div>
+  </div>
+
+  <div id="freqBars">
+    <div class="freq-group"><div class="freq-bar bass" id="barBass"></div><span class="freq-label">BAS</span></div>
+    <div class="freq-group"><div class="freq-bar mid" id="barMid"></div><span class="freq-label">MID</span></div>
+    <div class="freq-group"><div class="freq-bar high" id="barHigh"></div><span class="freq-label">HGH</span></div>
+  </div>
+
+  <!-- MediaPipe Hands -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <script>
+    (() => {
+      const vid = document.getElementById('vid');
+      const cv = document.getElementById('cv');
+      const ctx = cv.getContext('2d');
+      const loader = document.getElementById('loader');
+
+      let W = 0, H = 0, t = 0;
+      let currentHands = []; // Array of hand landmark arrays
+
+      // === AUDIO STATE ===
+      let audioCtx = null, analyser = null, freqData = null, audioSource = null;
+      let audioMode = 'none';
+      let bass = 0, mids = 0, highs = 0;
+      let bassSmooth = 0, midsSmooth = 0, highsSmooth = 0;
+      let bassPrev = 0; // For beat detection
+
+      // === PARTICLES ===
+      const fireParticles = [];
+      const MAX_FIRE = 3000;
+      const sparkParticles = [];
+      const MAX_SPARKS = 500;
+      const energyBeams = [];
+
+      // === HAND LANDMARK CONNECTIONS ===
+      const HAND_CONNECTIONS = [
+        [0,1],[1,2],[2,3],[3,4],       // Thumb
+        [0,5],[5,6],[6,7],[7,8],       // Index
+        [0,9],[9,10],[10,11],[11,12],   // Middle - fixed to go through 0
+        [0,13],[13,14],[14,15],[15,16], // Ring - fixed to go through 0
+        [0,17],[17,18],[18,19],[19,20], // Pinky
+        [5,9],[9,13],[13,17],           // Palm
+      ];
+      // Fingertip indices
+      const FINGERTIPS = [4, 8, 12, 16, 20];
+      const FINGER_BASES = [2, 5, 9, 13, 17];
+
+      function resize() {
+        W = cv.width = window.innerWidth;
+        H = cv.height = window.innerHeight;
+      }
+      resize();
+      window.addEventListener('resize', resize);
+
+      function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+      function lmS(lm) { return { x: (1 - lm.x) * W, y: lm.y * H }; } // Mirror + scale
+
+      // ====== AUDIO SETUP ======
+      function ensureAudioCtx() {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+      }
+
+      function createAnalyser(source, connectToSpeakers) {
+        ensureAudioCtx();
+        if (analyser) { try { analyser.disconnect(); } catch(e){} }
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 1024;
+        analyser.smoothingTimeConstant = 0.8;
+        freqData = new Uint8Array(analyser.frequencyBinCount);
+        source.connect(analyser);
+        if (connectToSpeakers) analyser.connect(audioCtx.destination);
+        return analyser;
+      }
+
+      // Mic
+      document.getElementById('btnMic').addEventListener('click', async () => {
+        try {
+          ensureAudioCtx();
+          if (audioSource) { try { audioSource.disconnect(); } catch(e){} }
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+          audioSource = audioCtx.createMediaStreamSource(stream);
+          createAnalyser(audioSource, false);
+          setActiveBtn('btnMic'); audioMode = 'mic';
+          document.getElementById('hMode').textContent = 'MICROPHONE';
+        } catch(e) { console.error(e); }
+      });
+
+      // System audio
+      document.getElementById('btnScreen').addEventListener('click', async () => {
+        try {
+          ensureAudioCtx();
+          if (audioSource) { try { audioSource.disconnect(); } catch(e){} }
+          const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+          stream.getVideoTracks().forEach(t => t.stop());
+          if (stream.getAudioTracks().length === 0) { alert('No audio captured. Check "Share audio".'); return; }
+          audioSource = audioCtx.createMediaStreamSource(stream);
+          createAnalyser(audioSource, false);
+          setActiveBtn('btnScreen'); audioMode = 'screen';
+          document.getElementById('hMode').textContent = 'SYSTEM AUDIO';
+        } catch(e) { console.error(e); }
+      });
+
+      // Audio file
+      const fileInput = document.getElementById('fileInput');
+      const audioEl = document.getElementById('audioEl');
+      document.getElementById('btnFile').addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', (e) => { if (e.target.files.length) loadAudioFile(e.target.files[0]); });
+
+      let dragC = 0;
+      const dropZone = document.getElementById('dropZone');
+      document.addEventListener('dragenter', (e) => { e.preventDefault(); dragC++; dropZone.classList.add('active'); });
+      document.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+      document.addEventListener('dragleave', (e) => { e.preventDefault(); dragC--; if (dragC <= 0) { dragC = 0; dropZone.classList.remove('active'); }});
+      document.addEventListener('drop', (e) => {
+        e.preventDefault(); dragC = 0; dropZone.classList.remove('active');
+        if (e.dataTransfer.files.length && e.dataTransfer.files[0].type.startsWith('audio/')) loadAudioFile(e.dataTransfer.files[0]);
+      });
+
+      let audioElSource = null;
+      function loadAudioFile(file) {
+        ensureAudioCtx();
+        if (audioSource) { try { audioSource.disconnect(); } catch(e){} }
+        audioEl.src = URL.createObjectURL(file);
+        audioEl.play();
+        if (!audioElSource) {
+          audioElSource = audioCtx.createMediaElementSource(audioEl);
+        }
+        audioSource = audioElSource;
+        createAnalyser(audioSource, true);
+        setActiveBtn('btnFile'); audioMode = 'file';
+        document.getElementById('hMode').textContent = file.name.slice(0, 22).toUpperCase();
+      }
+
+      function setActiveBtn(id) {
+        document.querySelectorAll('#audioPanel button').forEach(b => b.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+      }
+
+      // === FREQUENCY ANALYSIS ===
+      function analyzeFreqs() {
+        if (!analyser || !freqData) { bass = mids = highs = 0; return; }
+        analyser.getByteFrequencyData(freqData);
+        const bins = freqData.length;
+        const bassEnd = Math.floor(bins * 0.015);
+        const midEnd = Math.floor(bins * 0.18);
+        let bS = 0, mS = 0, hS = 0, bC = 0, mC = 0, hC = 0;
+        for (let i = 0; i < bins; i++) {
+          const v = freqData[i] / 255;
+          if (i <= bassEnd) { bS += v; bC++; }
+          else if (i <= midEnd) { mS += v; mC++; }
+          else { hS += v; hC++; }
+        }
+        const rB = bC > 0 ? bS / bC : 0;
+        const rM = mC > 0 ? mS / mC : 0;
+        const rH = hC > 0 ? hS / hC : 0;
+        bassPrev = bass;
+        bass = bass * 0.65 + rB * 0.35;
+        mids = mids * 0.7 + rM * 0.3;
+        highs = highs * 0.75 + rH * 0.25;
+        bassSmooth = bassSmooth * 0.9 + bass * 0.1;
+        midsSmooth = midsSmooth * 0.91 + mids * 0.09;
+        highsSmooth = highsSmooth * 0.92 + highs * 0.08;
+      }
+
+      function isBeat() { return bass > 0.5 && bass - bassPrev > 0.08; }
+
+      // ============================================================
+      //  FIRE / ENERGY PARTICLES
+      // ============================================================
+      function spawnFireFromHand(handLm) {
+        const wrist = lmS(handLm[0]);
+        const midFinger = lmS(handLm[12]);
+        const palmCenter = { x: (wrist.x + midFinger.x) / 2, y: (wrist.y + midFinger.y) / 2 };
+
+        // Direction: from wrist toward fingers (the "cast" direction)
+        const dirX = midFinger.x - wrist.x;
+        const dirY = midFinger.y - wrist.y;
+        const dirLen = Math.hypot(dirX, dirY) || 1;
+        const ndx = dirX / dirLen, ndy = dirY / dirLen;
+
+        // Fire intensity scales with bass
+        const intensity = 0.3 + bass * 0.7;
+        const turb = mids; // Turbulence from mids
+        // Spawn rate scales with audio
+        const spawnCount = Math.floor(3 + bass * 20 + mids * 10);
+
+        for (let i = 0; i < spawnCount && fireParticles.length < MAX_FIRE; i++) {
+          // Spawn from all fingertips + palm
+          let srcX, srcY;
+          if (i < 5 && i < FINGERTIPS.length) {
+            // From fingertips
+            const tip = lmS(handLm[FINGERTIPS[i]]);
+            srcX = tip.x; srcY = tip.y;
+          } else {
+            // From palm area
+            const rIdx = Math.floor(Math.random() * 21);
+            const rPt = lmS(handLm[rIdx]);
+            srcX = rPt.x + (Math.random() - 0.5) * 15;
+            srcY = rPt.y + (Math.random() - 0.5) * 15;
+          }
+
+          const spread = 0.6 + turb * 1.2;
+          const speed = 2 + bass * 8 + Math.random() * 4;
+          const angle = Math.atan2(ndy, ndx) + (Math.random() - 0.5) * spread;
+
+          fireParticles.push({
+            x: srcX + (Math.random() - 0.5) * 8,
+            y: srcY + (Math.random() - 0.5) * 8,
+            vx: Math.cos(angle) * speed + (Math.random() - 0.5) * turb * 4,
+            vy: Math.sin(angle) * speed + (Math.random() - 0.5) * turb * 4 - 1.5, // Slight upward drift
+            life: 0.6 + Math.random() * 0.4,
+            maxLife: 0.6 + Math.random() * 0.4,
+            size: 2 + Math.random() * (4 + bass * 6),
+            hue: 20 + Math.random() * 40 + bass * 15, // Orange → gold → white
+            sat: 80 + Math.random() * 20,
+            lit: 50 + bass * 30 + Math.random() * 20,
+          });
+        }
+
+        // === SPARK BURSTS on beats ===
+        if (isBeat()) {
+          for (let i = 0; i < 15 && sparkParticles.length < MAX_SPARKS; i++) {
+            for (const tipIdx of FINGERTIPS) {
+              const tip = lmS(handLm[tipIdx]);
+              const angle = Math.random() * Math.PI * 2;
+              const speed = 4 + Math.random() * 10;
+              sparkParticles.push({
+                x: tip.x, y: tip.y,
+                vx: Math.cos(angle) * speed,
+                vy: Math.sin(angle) * speed - 2,
+                life: 1, size: 1 + Math.random() * 2.5,
+                hue: 30 + Math.random() * 30,
+              });
+            }
+          }
+        }
+
+        // === ENERGY TENDRILS between fingertips on highs ===
+        if (highs > 0.2) {
+          for (let i = 0; i < FINGERTIPS.length - 1; i++) {
+            const a = lmS(handLm[FINGERTIPS[i]]);
+            const b = lmS(handLm[FINGERTIPS[i + 1]]);
+            if (Math.random() < highs * 0.4) {
+              energyBeams.push({ ax: a.x, ay: a.y, bx: b.x, by: b.y, life: 0.3 + Math.random() * 0.3, hue: 30 + Math.random() * 30 });
+            }
+          }
+        }
+      }
+
+      function updateAndDrawFire(dt) {
+        // === FIRE PARTICLES ===
+        for (let i = fireParticles.length - 1; i >= 0; i--) {
+          const p = fireParticles[i];
+          p.x += p.vx * dt * 60;
+          p.y += p.vy * dt * 60;
+          p.vy -= 0.15; // Upward fire drift
+          p.vx *= 0.97;
+          p.vy *= 0.97;
+          // Mid-frequency turbulence
+          p.x += Math.sin(t * 8 + p.y * 0.05) * mids * 2;
+          p.life -= dt * (1.2 + mids * 0.5);
+
+          if (p.life <= 0) { fireParticles.splice(i, 1); continue; }
+
+          const lifeRatio = p.life / p.maxLife;
+          const alpha = lifeRatio * (0.5 + bass * 0.5);
+
+          // Color: starts bright yellow/white, fades to orange → dark red
+          const hue = p.hue + (1 - lifeRatio) * 15; // Shift toward red as it dies
+          const sat = p.sat - (1 - lifeRatio) * 30;
+          const lit = p.lit * lifeRatio + 20;
+          const size = p.size * (0.3 + lifeRatio * 0.7);
+
+          ctx.globalAlpha = clamp(alpha, 0, 1);
+          ctx.fillStyle = `hsl(${hue}, ${clamp(sat, 30, 100)}%, ${clamp(lit, 15, 95)}%)`;
+
+          // Glow on the hottest particles
+          if (lifeRatio > 0.7 && bass > 0.3) {
+            ctx.shadowBlur = 8 + bass * 12;
+            ctx.shadowColor = `hsla(${hue}, 90%, 60%, ${alpha * 0.6})`;
+          } else {
+            ctx.shadowBlur = 0;
+          }
+
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.shadowBlur = 0;
+
+        // === SPARKS ===
+        for (let i = sparkParticles.length - 1; i >= 0; i--) {
+          const p = sparkParticles[i];
+          p.x += p.vx * dt * 60;
+          p.y += p.vy * dt * 60;
+          p.vx *= 0.94; p.vy *= 0.94;
+          p.vy += 0.1; // Gravity
+          p.life -= dt * 1.5;
+
+          if (p.life <= 0) { sparkParticles.splice(i, 1); continue; }
+
+          ctx.globalAlpha = p.life * 0.9;
+          ctx.fillStyle = `hsl(${p.hue}, 90%, ${60 + p.life * 30}%)`;
+          ctx.shadowBlur = 6;
+          ctx.shadowColor = `hsla(${p.hue}, 90%, 60%, 0.6)`;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.shadowBlur = 0;
+
+        // === ENERGY TENDRILS ===
+        for (let i = energyBeams.length - 1; i >= 0; i--) {
+          const b = energyBeams[i];
+          b.life -= dt * 2;
+          if (b.life <= 0) { energyBeams.splice(i, 1); continue; }
+
+          ctx.globalAlpha = b.life * highs * 0.6;
+          ctx.strokeStyle = `hsl(${b.hue}, 80%, 70%)`;
+          ctx.lineWidth = 1 + highs * 2;
+          ctx.shadowBlur = 4 + highs * 8;
+          ctx.shadowColor = `hsla(${b.hue}, 80%, 60%, 0.5)`;
+
+          // Jagged lightning path
+          ctx.beginPath();
+          ctx.moveTo(b.ax, b.ay);
+          const segs = 6;
+          for (let s = 1; s < segs; s++) {
+            const frac = s / segs;
+            const mx = b.ax + (b.bx - b.ax) * frac + (Math.random() - 0.5) * 20 * highs;
+            const my = b.ay + (b.by - b.ay) * frac + (Math.random() - 0.5) * 20 * highs;
+            ctx.lineTo(mx, my);
+          }
+          ctx.lineTo(b.bx, b.by);
+          ctx.stroke();
+        }
+        ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1;
+      }
+
+      // ============================================================
+      //  DRAW HAND SKELETON (green lines + red dots like reference)
+      // ============================================================
+      function drawHandSkeleton(handLm) {
+        // Connections — green lines
+        ctx.strokeStyle = 'rgba(0, 255, 80, 0.8)';
+        ctx.lineWidth = 2;
+        for (const [a, b] of HAND_CONNECTIONS) {
+          const pa = lmS(handLm[a]), pb = lmS(handLm[b]);
+          ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+        }
+
+        // Joints — red dots
+        for (let i = 0; i < 21; i++) {
+          const pt = lmS(handLm[i]);
+          ctx.fillStyle = '#ff2020';
+          ctx.beginPath(); ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = 'rgba(255, 80, 80, 0.6)';
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2); ctx.stroke();
+        }
+
+        // Fingertip glow — reactive to audio
+        const glowIntensity = 0.3 + bass * 0.5 + highs * 0.2;
+        for (const tipIdx of FINGERTIPS) {
+          const tip = lmS(handLm[tipIdx]);
+          const glow = ctx.createRadialGradient(tip.x, tip.y, 2, tip.x, tip.y, 15 + bass * 20);
+          glow.addColorStop(0, `rgba(255, 180, 40, ${glowIntensity})`);
+          glow.addColorStop(0.5, `rgba(255, 100, 20, ${glowIntensity * 0.4})`);
+          glow.addColorStop(1, 'rgba(255, 60, 10, 0)');
+          ctx.fillStyle = glow;
+          ctx.beginPath(); ctx.arc(tip.x, tip.y, 15 + bass * 20, 0, Math.PI * 2); ctx.fill();
+        }
+      }
+
+      // ============================================================
+      //  DRAW ENERGY AURA around hand (bass-reactive glow)
+      // ============================================================
+      function drawHandAura(handLm) {
+        if (bass < 0.15 && mids < 0.15) return;
+
+        const wrist = lmS(handLm[0]);
+        const midTip = lmS(handLm[12]);
+        const cx = (wrist.x + midTip.x) / 2;
+        const cy = (wrist.y + midTip.y) / 2;
+        const spread = Math.hypot(midTip.x - wrist.x, midTip.y - wrist.y);
+
+        const auraR = spread * 0.8 + bass * 60;
+        const g = ctx.createRadialGradient(cx, cy, 5, cx, cy, auraR);
+        g.addColorStop(0, `rgba(255, 160, 40, ${bass * 0.2})`);
+        g.addColorStop(0.4, `rgba(255, 80, 20, ${bass * 0.1})`);
+        g.addColorStop(0.7, `rgba(200, 40, 10, ${bass * 0.05})`);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(cx, cy, auraR, 0, Math.PI * 2); ctx.fill();
+      }
+
+      // ============================================================
+      //  MAIN DRAW LOOP
+      // ============================================================
+      let lastTime = performance.now();
+
+      function drawFrame(now) {
+        const dt = Math.min(0.033, (now - lastTime) / 1000);
+        lastTime = now; t += dt;
+
+        analyzeFreqs();
+
+        // HUD
+        document.getElementById('hBass').textContent = bass.toFixed(2);
+        document.getElementById('hMid').textContent = mids.toFixed(2);
+        document.getElementById('hHigh').textContent = highs.toFixed(2);
+        document.getElementById('barBass').style.height = (3 + bass * 55) + 'px';
+        document.getElementById('barMid').style.height = (3 + mids * 55) + 'px';
+        document.getElementById('barHigh').style.height = (3 + highs * 55) + 'px';
+
+        ctx.clearRect(0, 0, W, H);
+
+        // Draw mirrored webcam
+        ctx.save();
+        ctx.translate(W, 0); ctx.scale(-1, 1);
+        ctx.drawImage(vid, 0, 0, W, H);
+        ctx.restore();
+
+        // Slight darken on bass hits (cinematic pulse)
+        if (bass > 0.4) {
+          ctx.fillStyle = `rgba(0, 0, 0, ${(bass - 0.4) * 0.2})`;
+          ctx.fillRect(0, 0, W, H);
+        }
+
+        // Process each hand
+        for (const handLm of currentHands) {
+          // 1. Aura glow (behind everything)
+          drawHandAura(handLm);
+
+          // 2. Spawn fire particles
+          spawnFireFromHand(handLm);
+
+          // 3. Draw hand skeleton
+          drawHandSkeleton(handLm);
+        }
+
+        // 4. Draw all fire/spark/beam particles
+        updateAndDrawFire(dt);
+
+        // Vignette — bass reactive
+        const vigR = Math.max(W, H) * 0.65;
+        const vig = ctx.createRadialGradient(W / 2, H / 2, vigR * 0.4, W / 2, H / 2, vigR);
+        vig.addColorStop(0, 'rgba(0,0,0,0)');
+        vig.addColorStop(1, `rgba(0,0,0,${0.2 + bass * 0.15})`);
+        ctx.fillStyle = vig;
+        ctx.fillRect(0, 0, W, H);
+
+        requestAnimationFrame(drawFrame);
+      }
+      requestAnimationFrame(drawFrame);
+
+      // ============================================================
+      //  START CAMERA + MEDIAPIPE HANDS
+      // ============================================================
+      async function startEngine() {
+        try {
+          const hands = new Hands({
+            locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+          });
+          hands.setOptions({
+            maxNumHands: 2,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.6,
+          });
+          hands.onResults((results) => {
+            currentHands = results.multiHandLandmarks || [];
+          });
+
+          const constraints = {
+            video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+          };
+          let stream;
+          try {
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+          } catch (e) {
+            console.error('Camera error:', e);
+            loader.innerHTML = `CAMERA ERROR: ${e.name}`;
+            return;
+          }
+
+          vid.srcObject = stream;
+          await vid.play();
+          loader.classList.add('hidden');
+
+          const camera = new Camera(vid, {
+            onFrame: async () => { await hands.send({ image: vid }); },
+            width: 1280, height: 720,
+          });
+          camera.start();
+        } catch (err) {
+          console.error('Engine error:', err);
+          loader.innerHTML = 'ENGINE INITIALIZATION FAILED';
+        }
+      }
+      startEngine();
+
+      // Auto-hide panel
+      let panelTimer = null;
+      const panel = document.getElementById('audioPanel');
+      function resetPanel() {
+        panel.classList.remove('hidden');
+        clearTimeout(panelTimer);
+        panelTimer = setTimeout(() => { if (audioMode !== 'none') panel.classList.add('hidden'); }, 6000);
+      }
+      document.addEventListener('mousemove', resetPanel);
+      document.addEventListener('click', resetPanel);
+
+    })();
+  </script>
+</body>
+</html>

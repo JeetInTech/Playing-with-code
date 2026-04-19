@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Audio-Reactive Singularity - Hand Energy</title>
+	<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
+	<style>
+		* { box-sizing: border-box; margin: 0; padding: 0; }
+		html, body {
+			width: 100%; height: 100%; overflow: hidden;
+			background: #050210; font-family: 'Outfit', sans-serif; user-select: none;
+		}
+		video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
+		canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+		/* Audio controls */
+		#audioPanel {
+			position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+			display: flex; align-items: center; justify-content: center; gap: 12px;
+			padding: 12px 20px;
+			background: linear-gradient(180deg, rgba(15, 5, 30, 0.8) 0%, rgba(15, 5, 30, 0) 100%);
+			transition: opacity 0.4s;
+		}
+		#audioPanel.hidden { opacity: 0; pointer-events: none; }
+		#audioPanel button {
+			background: rgba(160, 80, 255, 0.15); border: 1px solid rgba(180, 100, 255, 0.3);
+			color: rgba(220, 200, 255, 0.9); padding: 7px 18px; border-radius: 8px;
+			cursor: pointer; font-family: inherit; font-size: 12px; letter-spacing: 1px;
+			transition: all 0.2s; backdrop-filter: blur(4px);
+		}
+		#audioPanel button:hover {
+			background: rgba(160, 80, 255, 0.3); border-color: rgba(180, 100, 255, 0.6);
+			transform: translateY(-1px);
+		}
+		#audioPanel button.active {
+			background: rgba(180, 100, 255, 0.4); border-color: rgba(200, 120, 255, 0.8);
+			color: #fff; box-shadow: 0 0 20px rgba(160, 80, 255, 0.3);
+		}
+		#audioPanel .sep { color: rgba(160, 80, 255, 0.3); font-size: 18px; }
+
+		/* HUD */
+		#hud {
+			position: fixed; bottom: 14px; left: 16px; z-index: 15;
+			color: rgba(200, 180, 255, 0.6); font-size: 10px; letter-spacing: 1.5px;
+			line-height: 1.8; font-family: 'Courier New', monospace;
+		}
+		#hud .val { color: rgba(230, 210, 255, 0.9); }
+
+		/* Frequency bars */
+		#freqBars {
+			position: fixed; bottom: 14px; right: 16px; z-index: 15;
+			display: flex; gap: 6px; align-items: flex-end; height: 60px;
+		}
+		.freq-bar { width: 8px; border-radius: 4px 4px 0 0; min-height: 3px; transition: height 0.05s; }
+		.freq-bar.bass { background: linear-gradient(180deg, #d040ff, #7020a0); }
+		.freq-bar.mid { background: linear-gradient(180deg, #9040ff, #4010a0); }
+		.freq-bar.high { background: linear-gradient(180deg, #6080ff, #2030a0); }
+		.freq-label { color: rgba(200,180,255,0.5); font-size: 8px; letter-spacing: 1px; text-align: center; font-family: 'Courier New', monospace; }
+		.freq-group { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+
+		/* Loader */
+		#loader {
+			position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 25;
+			color: rgba(200, 140, 255, 0.9); font-size: 15px; letter-spacing: 3px; text-align: center; line-height: 2;
+		}
+		#loader.hidden { display: none; }
+
+		/* Drop zone */
+		#dropZone {
+			position: fixed; inset: 0; z-index: 30; display: none;
+			align-items: center; justify-content: center; background: rgba(5,2,10,0.85);
+		}
+		#dropZone.active { display: flex; }
+		#dropZone span {
+			color: rgba(220,180,255,0.9); font-size: 16px; letter-spacing: 3px;
+			border: 2px dashed rgba(180,100,255,0.4); padding: 40px 60px; border-radius: 16px;
+		}
+
+		/* Invisible audio tag */
+		audio { display: none; }
+	</style>
+</head>
+<body>
+	<video id="vid" autoplay playsinline muted></video>
+	<canvas id="cv"></canvas>
+
+	<div id="loader">INITIALIZING ENGINE...<br><span style="font-size:11px;color:rgba(180,120,255,0.7)">AI Hands + Audio Mesh</span></div>
+
+	<div id="audioPanel">
+		<button id="btnMic">MIC</button>
+		<span class="sep">|</span>
+		<button id="btnScreen">SYSTEM AUDIO</button>
+		<span class="sep">|</span>
+		<button id="btnFile">AUDIO FILE</button>
+		<input type="file" id="fileInput" accept="audio/*" style="display:none" />
+	</div>
+
+	<div id="dropZone"><span>DROP AUDIO FILE HERE</span></div>
+	<audio id="audioEl" crossorigin="anonymous"></audio>
+
+	<div id="hud">
+		<div>BASS <span class="val" id="hBass">0.00</span></div>
+		<div>MIDS <span class="val" id="hMid">0.00</span></div>
+		<div>HIGH <span class="val" id="hHigh">0.00</span></div>
+		<div style="margin-top:3px">MODE <span class="val" id="hMode">STANDBY</span></div>
+		<div>GESTURE <span class="val" id="hGesture">OPEN</span></div>
+	</div>
+
+	<div id="freqBars">
+		<div class="freq-group"><div class="freq-bar bass" id="barBass"></div><span class="freq-label">BAS</span></div>
+		<div class="freq-group"><div class="freq-bar mid" id="barMid"></div><span class="freq-label">MID</span></div>
+		<div class="freq-group"><div class="freq-bar high" id="barHigh"></div><span class="freq-label">HGH</span></div>
+	</div>
+
+	<!-- MediaPipe Hands -->
+	<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+	<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+	<script>
+		(() => {
+			const vid = document.getElementById('vid');
+			const cv = document.getElementById('cv');
+			const ctx = cv.getContext('2d');
+			const loader = document.getElementById('loader');
+
+			let W = 0, H = 0, t = 0;
+			let currentHands = [];
+
+			// === AUDIO STATE ===
+			let audioCtx = null, analyser = null, freqData = null, audioSource = null;
+			let audioMode = 'none';
+			let systemStream = null;
+			let fileObjectUrl = null;
+			let fileReady = false;
+			let primingFileUnlock = false;
+			let loadedFileLabel = '';
+			let visualEnergy = 0;
+			let pinchLocked = false;
+			let pinchLockMode = 'none';
+			let pinchReadyAt = 0;
+			let lastPinchToggleAt = 0;
+			let lastGestureLabel = 'OPEN';
+			let audioSparkSeed = 0;
+			let bass = 0, mids = 0, highs = 0;
+			let bassPrev = 0;
+
+			// Hand skeleton connections for the green lines
+			const HAND_CONNECTIONS = [
+				[0,1],[1,2],[2,3],[3,4],
+				[0,5],[5,6],[6,7],[7,8],
+				[0,9],[9,10],[10,11],[11,12],
+				[0,13],[13,14],[14,15],[15,16],
+				[0,17],[17,18],[18,19],[19,20],
+				[5,9],[9,13],[13,17],
+			];
+			const FINGERTIPS = [4, 8, 12, 16, 20];
+
+			function resize() {
+				W = cv.width = window.innerWidth;
+				H = cv.height = window.innerHeight;
+			}
+			resize();
+			window.addEventListener('resize', resize);
+
+			function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+			function lmS(lm) { return { x: (1 - lm.x) * W, y: lm.y * H }; }
+
+			// ====== AUDIO SETUP ======
+			function ensureAudioCtx() {
+				if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+				if (audioCtx.state === 'suspended') audioCtx.resume();
+			}
+
+			function createAnalyser(source, connectToSpeakers) {
+				ensureAudioCtx();
+				if (analyser) { try { analyser.disconnect(); } catch(e){} }
+				try { source.disconnect(); } catch(e){}
+				analyser = audioCtx.createAnalyser();
+				analyser.fftSize = 1024;
+				analyser.smoothingTimeConstant = 0.8;
+				freqData = new Uint8Array(analyser.frequencyBinCount);
+				source.connect(analyser);
+				if (connectToSpeakers) analyser.connect(audioCtx.destination);
+				return analyser;
+			}
+
+			// Mic
+			document.getElementById('btnMic').addEventListener('click', async () => {
+				try {
+					ensureAudioCtx();
+					audioEl.pause();
+					if (audioSource) { try { audioSource.disconnect(); } catch(e){} }
+					const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+					audioSource = audioCtx.createMediaStreamSource(stream);
+					createAnalyser(audioSource, false);
+					setActiveBtn('btnMic'); audioMode = 'mic';
+					document.getElementById('hMode').textContent = 'MICROPHONE';
+				} catch(e) { console.error(e); }
+			});
+
+			// System audio
+			document.getElementById('btnScreen').addEventListener('click', async () => {
+				try {
+					ensureAudioCtx();
+					audioEl.pause();
+					if (audioSource) { try { audioSource.disconnect(); } catch(e){} }
+					if (systemStream) systemStream.getTracks().forEach(t => t.stop());
+					const stream = await navigator.mediaDevices.getDisplayMedia({
+						video: { displaySurface: 'monitor' },
+						audio: {
+							systemAudio: 'include',
+							echoCancellation: false,
+							noiseSuppression: false,
+							autoGainControl: false,
+						}
+					});
+					systemStream = stream;
+					stream.getVideoTracks().forEach(track => { track.enabled = false; });
+
+					const audioTracks = stream.getAudioTracks();
+					if (audioTracks.length === 0) {
+						alert('SYSTEM AUDIO NOT CAPTURED!\n\nWindows/Spotify note:\n1. Choose "Entire Screen" in Chrome/Edge and enable "Share system audio".\n2. A normal app/window share usually will not expose Spotify audio.\n3. If using Spotify Web, choose the browser tab and enable "Share tab audio".');
+						stream.getTracks().forEach(t => t.stop());
+						systemStream = null;
+						return;
+					}
+
+					audioSource = audioCtx.createMediaStreamSource(stream);
+					createAnalyser(audioSource, false);
+					setActiveBtn('btnScreen'); audioMode = 'screen';
+					document.getElementById('hMode').textContent = 'SYSTEM AUDIO';
+				} catch(e) { console.error(e); }
+			});
+
+			// Audio file
+			const fileInput = document.getElementById('fileInput');
+			const audioEl = document.getElementById('audioEl');
+			document.getElementById('btnFile').addEventListener('click', () => {
+				ensureAudioCtx();
+				fileInput.click();
+			});
+			fileInput.addEventListener('change', (e) => { if (e.target.files.length) loadAudioFile(e.target.files[0]); });
+
+			let dragC = 0;
+			const dropZone = document.getElementById('dropZone');
+			document.addEventListener('dragenter', (e) => { e.preventDefault(); dragC++; dropZone.classList.add('active'); });
+			document.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+			document.addEventListener('dragleave', (e) => { e.preventDefault(); dragC--; if (dragC <= 0) { dragC = 0; dropZone.classList.remove('active'); }});
+			document.addEventListener('drop', (e) => {
+				e.preventDefault(); dragC = 0; dropZone.classList.remove('active');
+				if (e.dataTransfer.files.length && e.dataTransfer.files[0].type.startsWith('audio/')) loadAudioFile(e.dataTransfer.files[0]);
+			});
+
+			let audioElSource = null;
+			function connectFileAnalyser() {
+				if (!audioElSource) {
+					audioElSource = audioCtx.createMediaElementSource(audioEl);
+				}
+				audioSource = audioElSource;
+				createAnalyser(audioSource, true);
+				setActiveBtn('btnFile');
+				audioMode = 'file';
+			}
+
+			async function loadAudioFile(file) {
+				ensureAudioCtx();
+				audioEl.pause();
+				if (fileObjectUrl) URL.revokeObjectURL(fileObjectUrl);
+				fileObjectUrl = URL.createObjectURL(file);
+				audioEl.src = fileObjectUrl;
+				audioEl.currentTime = 0;
+				audioEl.load();
+				connectFileAnalyser();
+				fileReady = true;
+				loadedFileLabel = file.name.slice(0, 22).toUpperCase();
+				document.getElementById('hMode').textContent = 'FILE READY - PINCH';
+				primingFileUnlock = true;
+				const previousMuted = audioEl.muted;
+				const previousVolume = audioEl.volume;
+				try {
+					audioEl.muted = true;
+					audioEl.volume = 0;
+					await audioEl.play();
+					audioEl.pause();
+					audioEl.currentTime = 0;
+				} catch (err) {
+					console.warn('Audio unlock needs one direct click before gesture playback.', err);
+				} finally {
+					audioEl.muted = previousMuted;
+					audioEl.volume = previousVolume;
+					primingFileUnlock = false;
+				}
+				document.getElementById('hMode').textContent = 'FILE READY - PINCH';
+			}
+
+			audioEl.addEventListener('play', () => {
+				if (audioMode === 'file' && !primingFileUnlock) document.getElementById('hMode').textContent = loadedFileLabel || 'FILE PLAYING';
+			});
+			audioEl.addEventListener('pause', () => {
+				if (audioMode === 'file' && fileReady && !primingFileUnlock) document.getElementById('hMode').textContent = 'FILE PAUSED';
+			});
+			audioEl.addEventListener('ended', () => {
+				if (audioMode === 'file' && fileReady) {
+					audioEl.currentTime = 0;
+					document.getElementById('hMode').textContent = 'FILE READY - PINCH';
+				}
+			});
+
+			function setActiveBtn(id) {
+				document.querySelectorAll('#audioPanel button').forEach(b => b.classList.remove('active'));
+				document.getElementById(id).classList.add('active');
+			}
+
+			function isAudioLive() {
+				if (audioMode === 'file') return fileReady && !audioEl.paused && !audioEl.ended;
+				return audioMode === 'mic' || audioMode === 'screen';
+			}
+
+			function handSpan(handLm) {
+				const wrist = lmS(handLm[0]);
+				const midTip = lmS(handLm[12]);
+				const indexBase = lmS(handLm[5]);
+				const pinkyBase = lmS(handLm[17]);
+				return Math.max(55, Math.hypot(midTip.x - wrist.x, midTip.y - wrist.y) + Math.hypot(indexBase.x - pinkyBase.x, indexBase.y - pinkyBase.y) * 0.7);
+			}
+
+			function getPinch(handLm) {
+				const thumb = lmS(handLm[4]);
+				const index = lmS(handLm[8]);
+				const wrist = lmS(handLm[0]);
+				const middleBase = lmS(handLm[9]);
+				const indexBase = lmS(handLm[5]);
+				const pinkyBase = lmS(handLm[17]);
+				const palmDepth = Math.hypot(middleBase.x - wrist.x, middleBase.y - wrist.y);
+				const palmWidth = Math.hypot(indexBase.x - pinkyBase.x, indexBase.y - pinkyBase.y);
+				const scale = Math.max(45, palmDepth * 1.05 + palmWidth * 0.55);
+				const gap = Math.hypot(thumb.x - index.x, thumb.y - index.y);
+				const ratio = gap / scale;
+				return { thumb, index, gap, ratio };
+			}
+
+			async function toggleFilePlaybackFromGesture() {
+				if (audioMode === 'screen') {
+					document.getElementById('hMode').textContent = 'SPOTIFY APP NEEDS APP CONTROLS';
+					return;
+				}
+				if (audioMode === 'mic') {
+					document.getElementById('hMode').textContent = 'MIC HAS NO PLAYBACK';
+					return;
+				}
+				if (!fileReady) {
+					document.getElementById('hMode').textContent = 'LOAD AUDIO FILE FIRST';
+					return;
+				}
+
+				ensureAudioCtx();
+				if (audioMode !== 'file' || audioSource !== audioElSource) connectFileAnalyser();
+				try {
+					if (audioEl.paused || audioEl.ended) {
+						if (audioEl.ended) audioEl.currentTime = 0;
+						await audioEl.play();
+						document.getElementById('hMode').textContent = loadedFileLabel || 'FILE PLAYING';
+					} else {
+						audioEl.pause();
+						document.getElementById('hMode').textContent = 'FILE PAUSED';
+					}
+				} catch (err) {
+					console.error(err);
+					document.getElementById('hMode').textContent = 'CLICK FILE ONCE';
+				}
+			}
+
+			function updatePinchControl(now) {
+				if (currentHands.length < 2) {
+					pinchLocked = false;
+					pinchLockMode = 'none';
+					pinchReadyAt = 0;
+					lastGestureLabel = 'SHOW 2 HANDS';
+					return;
+				}
+
+				const h1 = currentHands[0], h2 = currentHands[1];
+				const pinches = [getPinch(h1), getPinch(h2)];
+				const avgSpan = (handSpan(h1) + handSpan(h2)) * 0.5;
+				const indexBridge = Math.hypot(pinches[0].index.x - pinches[1].index.x, pinches[0].index.y - pinches[1].index.y) / avgSpan;
+				const thumbBridge = Math.hypot(pinches[0].thumb.x - pinches[1].thumb.x, pinches[0].thumb.y - pinches[1].thumb.y) / avgSpan;
+				const localClosed = pinches.every(p => p.ratio < 0.34);
+				const localReleased = pinches.every(p => p.ratio > 0.56);
+				const bridgeClosed = indexBridge < 0.34 && thumbBridge < 0.42;
+				const bridgeReleased = indexBridge > 0.72 && thumbBridge > 0.72;
+				const closed = localClosed || bridgeClosed;
+				const tightClosed = pinches.every(p => p.ratio < 0.27) || (indexBridge < 0.24 && thumbBridge < 0.30);
+				const fullyOpen = localReleased && bridgeReleased;
+				const triggerMode = localClosed ? 'local' : bridgeClosed ? 'bridge' : 'none';
+
+				if (closed) {
+					if (!pinchReadyAt) pinchReadyAt = now;
+					lastGestureLabel = 'PINCH';
+				} else {
+					pinchReadyAt = 0;
+					lastGestureLabel = fullyOpen ? 'OPEN' : 'READY';
+				}
+
+				if (pinchLocked && (
+					(pinchLockMode === 'local' && localReleased) ||
+					(pinchLockMode === 'bridge' && bridgeReleased)
+				)) {
+					pinchLocked = false;
+					pinchLockMode = 'none';
+				}
+
+				const heldLongEnough = pinchReadyAt && now - pinchReadyAt > 130;
+				if (!pinchLocked && (heldLongEnough || tightClosed) && now - lastPinchToggleAt > 900) {
+					pinchLocked = true;
+					pinchLockMode = triggerMode;
+					lastPinchToggleAt = now;
+					pinchReadyAt = 0;
+					toggleFilePlaybackFromGesture();
+				}
+			}
+
+			// === FREQUENCY ANALYSIS ===
+			function analyzeFreqs() {
+				if (!analyser || !freqData || (audioMode === 'file' && audioEl.paused)) {
+					bassPrev = bass;
+					bass *= 0.82; mids *= 0.84; highs *= 0.86;
+					if (bass < 0.002) bass = 0;
+					if (mids < 0.002) mids = 0;
+					if (highs < 0.002) highs = 0;
+					return;
+				}
+				analyser.getByteFrequencyData(freqData);
+				const bins = freqData.length;
+				const bassEnd = Math.floor(bins * 0.015);
+				const midEnd = Math.floor(bins * 0.18);
+				let bS = 0, mS = 0, hS = 0, bC = 0, mC = 0, hC = 0;
+				for (let i = 0; i < bins; i++) {
+					const v = freqData[i] / 255;
+					if (i <= bassEnd) { bS += v; bC++; }
+					else if (i <= midEnd) { mS += v; mC++; }
+					else { hS += v; hC++; }
+				}
+				const rB = bC > 0 ? bS / bC : 0;
+				const rM = mC > 0 ? mS / mC : 0;
+				const rH = hC > 0 ? hS / hC : 0;
+				bassPrev = bass;
+				bass = bass * 0.65 + rB * 0.35;
+				mids = mids * 0.7 + rM * 0.3;
+				highs = highs * 0.75 + rH * 0.25;
+			}
+
+			function sampleAudio(frac) {
+				if (!freqData) return 0.12;
+				const curved = Math.pow(clamp(frac, 0, 1), 1.8);
+				const idx = Math.min(freqData.length - 1, Math.floor(curved * freqData.length * 0.86));
+				return freqData[idx] / 255;
+			}
+
+			function audioPower() {
+				return clamp(bass * 1.35 + mids * 0.8 + highs * 0.55, 0, 1.45);
+			}
+
+			// Draw hand skeleton
+			function drawHandSkeleton(handLm) {
+				ctx.strokeStyle = `rgba(190, 95, 255, ${0.28 + visualEnergy * 0.28})`;
+				ctx.lineWidth = 1.7;
+				for (const [a, b] of HAND_CONNECTIONS) {
+					const pa = lmS(handLm[a]), pb = lmS(handLm[b]);
+					ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+				}
+				for (let i = 0; i < 21; i++) {
+					const pt = lmS(handLm[i]);
+					const isTip = FINGERTIPS.includes(i);
+					ctx.fillStyle = isTip ? `rgba(255, 190, 110, ${0.45 + visualEnergy * 0.4})` : `rgba(230, 80, 255, ${0.28 + visualEnergy * 0.22})`;
+					ctx.beginPath(); ctx.arc(pt.x, pt.y, isTip ? 5.5 : 3.4, 0, Math.PI * 2); ctx.fill();
+				}
+
+				const pinch = getPinch(handLm);
+				const pinchGlow = clamp(1 - pinch.ratio / 0.56, 0, 1);
+				ctx.strokeStyle = `rgba(255, 205, 120, ${0.22 + pinchGlow * 0.58})`;
+				ctx.lineWidth = 2 + pinchGlow * 3;
+				ctx.beginPath();
+				ctx.moveTo(pinch.thumb.x, pinch.thumb.y);
+				ctx.lineTo(pinch.index.x, pinch.index.y);
+				ctx.stroke();
+			}
+
+			// 3D fluid translucent purple audio mesh
+			function draw3DAudioMesh(ptA, ptB) {
+				const dx = ptB.x - ptA.x;
+				const dy = ptB.y - ptA.y;
+				const length = Math.hypot(dx, dy);
+				const angle = Math.atan2(dy, dx);
+
+				if (length < 10) return;
+
+				const numSegments = 32;
+				const numRadial = 12;
+
+				const nx = -Math.sin(angle);
+				const ny = Math.cos(angle);
+
+				const vertices = [];
+				const timeSpin = t * 1.5;
+
+				for (let s = 0; s <= numSegments; s++) {
+					const f = s / numSegments;
+					const cx = ptA.x + dx * f;
+					const cy = ptA.y + dy * f;
+
+					const pinch = Math.sin(f * Math.PI);
+					const bIndex = Math.floor(f * ((freqData ? freqData.length : 128) * 0.4));
+					const audioVal = freqData ? (freqData[bIndex] / 255) : 0;
+
+					const baseRadius = 15;
+					const audioBurst = (audioVal * 160 + bass * 80) * pinch;
+
+					const row = [];
+					for (let r = 0; r < numRadial; r++) {
+						const theta = (r / numRadial) * Math.PI * 2 + timeSpin + (f * Math.PI);
+						const noise = Math.sin(t * 3 + r * 1.5 + s * 0.5) * 15 * mids;
+						const radius = baseRadius * pinch + audioBurst + noise + 10;
+
+						const z = Math.sin(theta) * radius;
+						const ox = Math.cos(theta) * radius * nx;
+						const oy = Math.cos(theta) * radius * ny;
+
+						row.push({ x: cx + ox, y: cy + oy, z: z, s: s });
+					}
+					vertices.push(row);
+				}
+
+				const quads = [];
+				for (let s = 0; s < numSegments; s++) {
+					for (let r = 0; r < numRadial; r++) {
+						const nextR = (r + 1) % numRadial;
+						const v0 = vertices[s][r];
+						const v1 = vertices[s + 1][r];
+						const v2 = vertices[s + 1][nextR];
+						const v3 = vertices[s][nextR];
+
+						const avgZ = (v0.z + v1.z + v2.z + v3.z) / 4;
+						quads.push({ v0, v1, v2, v3, z: avgZ, s: s });
+					}
+				}
+
+				quads.sort((a, b) => Math.abs(a.z) - Math.abs(b.z));
+				ctx.globalCompositeOperation = 'screen';
+
+				for (const q of quads) {
+					ctx.beginPath();
+					ctx.moveTo(q.v0.x, q.v0.y);
+					ctx.lineTo(q.v1.x, q.v1.y);
+					ctx.lineTo(q.v2.x, q.v2.y);
+					ctx.lineTo(q.v3.x, q.v3.y);
+					ctx.closePath();
+
+					const depthNorm = clamp((q.z + 150) / 300, 0, 1);
+					const f = q.s / numSegments;
+					const hue = 250 + (f * 50) + bass * 30;
+
+					const alpha = clamp(0.15 + depthNorm * 0.4 + bass * 0.3, 0.05, 0.85);
+					const lit = clamp(35 + depthNorm * 40 + mids * 20, 20, 90);
+
+					ctx.fillStyle = `hsla(${hue}, 85%, ${lit}%, ${alpha})`;
+					ctx.fill();
+
+					ctx.strokeStyle = `hsla(${hue}, 95%, ${lit + 20}%, ${alpha * 0.7})`;
+					ctx.lineWidth = 1;
+					ctx.stroke();
+				}
+
+				ctx.globalCompositeOperation = 'source-over';
+			}
+
+			function drawFluidFireRibbon(ptA, ptB, phase, strength) {
+				const dx = ptB.x - ptA.x;
+				const dy = ptB.y - ptA.y;
+				const length = Math.hypot(dx, dy);
+				if (length < 8 || visualEnergy <= 0.01) return;
+
+				const nx = -dy / length;
+				const ny = dx / length;
+				const segments = 18;
+				const left = [];
+				const right = [];
+				const line = [];
+				const energy = visualEnergy * strength;
+
+				for (let i = 0; i <= segments; i++) {
+					const f = i / segments;
+					const freqIndex = freqData ? Math.min(freqData.length - 1, Math.floor(f * freqData.length * 0.62)) : 0;
+					const audioVal = freqData ? freqData[freqIndex] / 255 : 0.15;
+					const pinch = 0.22 + Math.sin(f * Math.PI) * 0.78;
+					const wave = (
+						Math.sin(t * 5.2 + phase + f * 9.0) * (10 + mids * 44) +
+						Math.sin(t * 2.4 + phase * 1.7 + f * 17.0) * (5 + highs * 26)
+					) * pinch * energy;
+					const width = (5 + audioVal * 58 + bass * 52 + highs * 18) * pinch * energy;
+					const x = ptA.x + dx * f + nx * wave;
+					const y = ptA.y + dy * f + ny * wave;
+
+					left.push({ x: x + nx * width, y: y + ny * width });
+					right.push({ x: x - nx * width, y: y - ny * width });
+					line.push({ x, y });
+				}
+
+				ctx.save();
+				ctx.globalCompositeOperation = 'screen';
+				ctx.shadowBlur = 22 + bass * 34;
+				ctx.shadowColor = `rgba(205, 80, 255, ${0.28 * energy})`;
+
+				const hue = 270 + Math.sin(phase + t) * 15 + bass * 18;
+				const fillAlpha = clamp(0.08 + energy * (0.18 + bass * 0.12), 0.05, 0.42);
+				ctx.beginPath();
+				ctx.moveTo(left[0].x, left[0].y);
+				for (let i = 1; i < left.length; i++) ctx.lineTo(left[i].x, left[i].y);
+				for (let i = right.length - 1; i >= 0; i--) ctx.lineTo(right[i].x, right[i].y);
+				ctx.closePath();
+				ctx.fillStyle = `hsla(${hue}, 95%, ${54 + mids * 20}%, ${fillAlpha})`;
+				ctx.fill();
+
+				ctx.shadowBlur = 16 + highs * 28;
+				ctx.lineCap = 'round';
+				ctx.lineJoin = 'round';
+				for (let layer = 0; layer < 3; layer++) {
+					ctx.beginPath();
+					ctx.moveTo(line[0].x, line[0].y);
+					for (let i = 1; i < line.length; i++) ctx.lineTo(line[i].x, line[i].y);
+					ctx.strokeStyle = layer === 0
+						? `hsla(${hue + 18}, 100%, 72%, ${0.22 * energy})`
+						: layer === 1
+							? `hsla(292, 96%, 68%, ${0.28 * energy})`
+							: `hsla(35, 100%, 68%, ${0.16 * energy})`;
+					ctx.lineWidth = (22 - layer * 7 + bass * 32) * energy;
+					ctx.stroke();
+				}
+
+				for (const pt of [ptA, ptB]) {
+					const r = 7 + bass * 28 + highs * 15;
+					const glow = ctx.createRadialGradient(pt.x, pt.y, 0, pt.x, pt.y, r);
+					glow.addColorStop(0, `rgba(255, 220, 145, ${0.58 * energy})`);
+					glow.addColorStop(0.35, `rgba(235, 75, 255, ${0.28 * energy})`);
+					glow.addColorStop(1, 'rgba(150, 35, 255, 0)');
+					ctx.fillStyle = glow;
+					ctx.beginPath(); ctx.arc(pt.x, pt.y, r, 0, Math.PI * 2); ctx.fill();
+				}
+
+				ctx.restore();
+			}
+
+			function drawAmbientFire(center, tips) {
+				if (visualEnergy <= 0.01) return;
+				ctx.save();
+				ctx.globalCompositeOperation = 'screen';
+
+				const pulse = 0.5 + bass * 1.1 + mids * 0.5;
+				const radius = 120 + tips.length * 18 + pulse * 120;
+				const aura = ctx.createRadialGradient(center.x, center.y, 8, center.x, center.y, radius);
+				aura.addColorStop(0, `rgba(255, 190, 110, ${0.18 * visualEnergy})`);
+				aura.addColorStop(0.28, `rgba(210, 70, 255, ${0.22 * visualEnergy})`);
+				aura.addColorStop(0.72, `rgba(120, 30, 255, ${0.095 * visualEnergy})`);
+				aura.addColorStop(1, 'rgba(45, 0, 100, 0)');
+				ctx.fillStyle = aura;
+				ctx.beginPath(); ctx.arc(center.x, center.y, radius, 0, Math.PI * 2); ctx.fill();
+
+				for (let i = 0; i < 44; i++) {
+					const ang = i * 2.399 + t * (0.4 + highs);
+					const drift = Math.sin(t * 2 + i) * 42;
+					const dist = (70 + (i % 11) * 28 + drift) * (0.65 + bass);
+					const x = center.x + Math.cos(ang) * dist;
+					const y = center.y + Math.sin(ang * 1.13) * dist;
+					const size = (1.5 + (i % 5) + highs * 9) * visualEnergy;
+					ctx.fillStyle = `hsla(${270 + (i % 5) * 9}, 98%, ${58 + (i % 4) * 7}%, ${0.11 * visualEnergy})`;
+					ctx.beginPath(); ctx.arc(x, y, size, 0, Math.PI * 2); ctx.fill();
+				}
+
+				ctx.restore();
+			}
+
+			function drawFingertipVisualization(hands) {
+				const allTips = [];
+				const perHandTips = hands.map(hand => FINGERTIPS.map(idx => lmS(hand[idx])));
+				for (const tips of perHandTips) allTips.push(...tips);
+				if (allTips.length < 2) return;
+
+				const center = allTips.reduce((acc, pt) => {
+					acc.x += pt.x; acc.y += pt.y;
+					return acc;
+				}, { x: 0, y: 0 });
+				center.x /= allTips.length;
+				center.y /= allTips.length;
+				center.x += Math.sin(t * 1.9) * (12 + bass * 26) * visualEnergy;
+				center.y += Math.cos(t * 1.6) * (10 + mids * 24) * visualEnergy;
+
+				drawAmbientFire(center, allTips);
+
+				for (let h = 0; h < perHandTips.length; h++) {
+					for (let i = 0; i < perHandTips[h].length; i++) {
+						drawFluidFireRibbon(perHandTips[h][i], center, h * 1.7 + i * 0.9, 0.95);
+					}
+				}
+
+				if (perHandTips.length >= 2) {
+					for (let i = 0; i < FINGERTIPS.length; i++) {
+						drawFluidFireRibbon(perHandTips[0][i], perHandTips[1][i], 7 + i * 1.2, 1.15);
+					}
+				}
+
+				ctx.save();
+				ctx.globalCompositeOperation = 'screen';
+				const coreR = (24 + bass * 85 + mids * 30) * visualEnergy;
+				const core = ctx.createRadialGradient(center.x, center.y, 0, center.x, center.y, coreR);
+				core.addColorStop(0, `rgba(255, 235, 190, ${0.55 * visualEnergy})`);
+				core.addColorStop(0.25, `rgba(235, 80, 255, ${0.38 * visualEnergy})`);
+				core.addColorStop(0.72, `rgba(120, 40, 255, ${0.14 * visualEnergy})`);
+				core.addColorStop(1, 'rgba(60, 0, 110, 0)');
+				ctx.fillStyle = core;
+				ctx.beginPath(); ctx.arc(center.x, center.y, coreR, 0, Math.PI * 2); ctx.fill();
+				ctx.restore();
+			}
+
+			// Main loop
+			let lastTime = performance.now();
+
+			function drawFrame(now) {
+				const dt = Math.min(0.033, (now - lastTime) / 1000);
+				lastTime = now; t += dt;
+
+				analyzeFreqs();
+				updatePinchControl(now);
+				const targetVisualEnergy = isAudioLive() && currentHands.length > 0 ? 1 : 0;
+				visualEnergy += (targetVisualEnergy - visualEnergy) * Math.min(1, dt * (targetVisualEnergy ? 5.5 : 4.2));
+
+				document.getElementById('hBass').textContent = bass.toFixed(2);
+				document.getElementById('hMid').textContent = mids.toFixed(2);
+				document.getElementById('hHigh').textContent = highs.toFixed(2);
+				document.getElementById('hGesture').textContent = lastGestureLabel;
+				document.getElementById('barBass').style.height = (3 + bass * 55) + 'px';
+				document.getElementById('barMid').style.height = (3 + mids * 55) + 'px';
+				document.getElementById('barHigh').style.height = (3 + highs * 55) + 'px';
+
+				ctx.clearRect(0, 0, W, H);
+
+				ctx.save();
+				ctx.translate(W, 0); ctx.scale(-1, 1);
+				ctx.drawImage(vid, 0, 0, W, H);
+				ctx.restore();
+
+				ctx.fillStyle = `rgba(10, 0, 20, ${0.38 + visualEnergy * 0.18 + bass * 0.24})`;
+				ctx.fillRect(0, 0, W, H);
+
+				if (currentHands.length > 0) {
+					for (const hand of currentHands) drawHandSkeleton(hand);
+					if (visualEnergy > 0.01) drawFingertipVisualization(currentHands);
+				}
+
+				requestAnimationFrame(drawFrame);
+			}
+			requestAnimationFrame(drawFrame);
+
+			// Start camera
+			async function startEngine() {
+				try {
+					const hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+					hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+					hands.onResults((res) => { currentHands = res.multiHandLandmarks || []; });
+
+					const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 } } });
+					vid.srcObject = stream;
+					await vid.play();
+					loader.classList.add('hidden');
+
+					const camera = new Camera(vid, { onFrame: async () => { await hands.send({ image: vid }); }, width: 1280, height: 720 });
+					camera.start();
+				} catch (err) {
+					console.error(err);
+					loader.innerHTML = 'ENGINE INITIALIZATION FAILED';
+				}
+			}
+			startEngine();
+
+			// UI auto hide
+			let panelTimer = null;
+			const panel = document.getElementById('audioPanel');
+			function resetPanel() {
+				panel.classList.remove('hidden');
+				clearTimeout(panelTimer);
+				panelTimer = setTimeout(() => { if (audioMode !== 'none') panel.classList.add('hidden'); }, 6000);
+			}
+			document.addEventListener('mousemove', resetPanel);
+			document.addEventListener('click', resetPanel);
+
+		})();
+	</script>
+</body>
+</html>

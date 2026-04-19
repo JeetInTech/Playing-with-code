@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Audio-Reactive Singularity - Hand Energy</title>
+	<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700&display=swap" rel="stylesheet">
+	<style>
+		* { box-sizing: border-box; margin: 0; padding: 0; }
+		html, body {
+			width: 100%; height: 100%; overflow: hidden;
+			background: #050210; font-family: 'Outfit', sans-serif; user-select: none;
+		}
+		video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; }
+		canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+
+		/* Audio controls */
+		#audioPanel {
+			position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+			display: flex; align-items: center; justify-content: center; gap: 12px;
+			padding: 12px 20px;
+			background: linear-gradient(180deg, rgba(15, 5, 30, 0.8) 0%, rgba(15, 5, 30, 0) 100%);
+			transition: opacity 0.4s;
+		}
+		#audioPanel.hidden { opacity: 0; pointer-events: none; }
+		#audioPanel button {
+			background: rgba(160, 80, 255, 0.15); border: 1px solid rgba(180, 100, 255, 0.3);
+			color: rgba(220, 200, 255, 0.9); padding: 7px 18px; border-radius: 8px;
+			cursor: pointer; font-family: inherit; font-size: 12px; letter-spacing: 1px;
+			transition: all 0.2s; backdrop-filter: blur(4px);
+		}
+		#audioPanel button:hover {
+			background: rgba(160, 80, 255, 0.3); border-color: rgba(180, 100, 255, 0.6);
+			transform: translateY(-1px);
+		}
+		#audioPanel button.active {
+			background: rgba(180, 100, 255, 0.4); border-color: rgba(200, 120, 255, 0.8);
+			color: #fff; box-shadow: 0 0 20px rgba(160, 80, 255, 0.3);
+		}
+		#audioPanel .sep { color: rgba(160, 80, 255, 0.3); font-size: 18px; }
+
+		/* HUD */
+		#hud {
+			position: fixed; bottom: 14px; left: 16px; z-index: 15;
+			color: rgba(200, 180, 255, 0.6); font-size: 10px; letter-spacing: 1.5px;
+			line-height: 1.8; font-family: 'Courier New', monospace;
+		}
+		#hud .val { color: rgba(230, 210, 255, 0.9); }
+
+		/* Frequency bars */
+		#freqBars {
+			position: fixed; bottom: 14px; right: 16px; z-index: 15;
+			display: flex; gap: 6px; align-items: flex-end; height: 60px;
+		}
+		.freq-bar { width: 8px; border-radius: 4px 4px 0 0; min-height: 3px; transition: height 0.05s; }
+		.freq-bar.bass { background: linear-gradient(180deg, #d040ff, #7020a0); }
+		.freq-bar.mid { background: linear-gradient(180deg, #9040ff, #4010a0); }
+		.freq-bar.high { background: linear-gradient(180deg, #6080ff, #2030a0); }
+		.freq-label { color: rgba(200,180,255,0.5); font-size: 8px; letter-spacing: 1px; text-align: center; font-family: 'Courier New', monospace; }
+		.freq-group { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+
+		/* Loader */
+		#loader {
+			position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 25;
+			color: rgba(200, 140, 255, 0.9); font-size: 15px; letter-spacing: 3px; text-align: center; line-height: 2;
+		}
+		#loader.hidden { display: none; }
+
+		/* Drop zone */
+		#dropZone {
+			position: fixed; inset: 0; z-index: 30; display: none;
+			align-items: center; justify-content: center; background: rgba(5,2,10,0.85);
+		}
+		#dropZone.active { display: flex; }
+		#dropZone span {
+			color: rgba(220,180,255,0.9); font-size: 16px; letter-spacing: 3px;
+			border: 2px dashed rgba(180,100,255,0.4); padding: 40px 60px; border-radius: 16px;
+		}
+
+		/* Invisible audio tag */
+		audio { display: none; }
+	</style>
+</head>
+<body>
+	<video id="vid" autoplay playsinline muted></video>
+	<canvas id="cv"></canvas>
+
+	<div id="loader">INITIALIZING ENGINE...<br><span style="font-size:11px;color:rgba(180,120,255,0.7)">AI Hands + Audio Mesh</span></div>
+
+	<div id="audioPanel">
+		<button id="btnMic">MIC</button>
+		<span class="sep">|</span>
+		<button id="btnScreen">SYSTEM AUDIO</button>
+		<span class="sep">|</span>
+		<button id="btnFile">AUDIO FILE</button>
+		<input type="file" id="fileInput" accept="audio/*" style="display:none" />
+	</div>
+
+	<div id="dropZone"><span>DROP AUDIO FILE HERE</span></div>
+	<audio id="audioEl" crossorigin="anonymous"></audio>
+
+	<div id="hud">
+		<div>BASS <span class="val" id="hBass">0.00</span></div>
+		<div>MIDS <span class="val" id="hMid">0.00</span></div>
+		<div>HIGH <span class="val" id="hHigh">0.00</span></div>
+		<div style="margin-top:3px">MODE <span class="val" id="hMode">STANDBY</span></div>
+	</div>
+
+	<div id="freqBars">
+		<div class="freq-group"><div class="freq-bar bass" id="barBass"></div><span class="freq-label">BAS</span></div>
+		<div class="freq-group"><div class="freq-bar mid" id="barMid"></div><span class="freq-label">MID</span></div>
+		<div class="freq-group"><div class="freq-bar high" id="barHigh"></div><span class="freq-label">HGH</span></div>
+	</div>
+
+	<!-- MediaPipe Hands -->
+	<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+	<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+	<script>
+		(() => {
+			const vid = document.getElementById('vid');
+			const cv = document.getElementById('cv');
+			const ctx = cv.getContext('2d');
+			const loader = document.getElementById('loader');
+
+			let W = 0, H = 0, t = 0;
+			let currentHands = [];
+
+			// === AUDIO STATE ===
+			let audioCtx = null, analyser = null, freqData = null, audioSource = null;
+			let audioMode = 'none';
+			let bass = 0, mids = 0, highs = 0;
+			let bassPrev = 0;
+
+			// Hand skeleton connections for the green lines
+			const HAND_CONNECTIONS = [
+				[0,1],[1,2],[2,3],[3,4],
+				[0,5],[5,6],[6,7],[7,8],
+				[0,9],[9,10],[10,11],[11,12],
+				[0,13],[13,14],[14,15],[15,16],
+				[0,17],[17,18],[18,19],[19,20],
+				[5,9],[9,13],[13,17],
+			];
+
+			function resize() {
+				W = cv.width = window.innerWidth;
+				H = cv.height = window.innerHeight;
+			}
+			resize();
+			window.addEventListener('resize', resize);
+
+			function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+			function lmS(lm) { return { x: (1 - lm.x) * W, y: lm.y * H }; }
+
+			// ====== AUDIO SETUP ======
+			function ensureAudioCtx() {
+				if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+				if (audioCtx.state === 'suspended') audioCtx.resume();
+			}
+
+			function createAnalyser(source, connectToSpeakers) {
+				ensureAudioCtx();
+				if (analyser) { try { analyser.disconnect(); } catch(e){} }
+				analyser = audioCtx.createAnalyser();
+				analyser.fftSize = 1024;
+				analyser.smoothingTimeConstant = 0.8;
+				freqData = new Uint8Array(analyser.frequencyBinCount);
+				source.connect(analyser);
+				if (connectToSpeakers) analyser.connect(audioCtx.destination);
+				return analyser;
+			}
+
+			// Mic
+			document.getElementById('btnMic').addEventListener('click', async () => {
+				try {
+					ensureAudioCtx();
+					if (audioSource) { try { audioSource.disconnect(); } catch(e){} }
+					const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+					audioSource = audioCtx.createMediaStreamSource(stream);
+					createAnalyser(audioSource, false);
+					setActiveBtn('btnMic'); audioMode = 'mic';
+					document.getElementById('hMode').textContent = 'MICROPHONE';
+				} catch(e) { console.error(e); }
+			});
+
+			// System audio
+			document.getElementById('btnScreen').addEventListener('click', async () => {
+				try {
+					ensureAudioCtx();
+					if (audioSource) { try { audioSource.disconnect(); } catch(e){} }
+					const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+					stream.getVideoTracks().forEach(t => t.stop());
+
+					const audioTracks = stream.getAudioTracks();
+					if (audioTracks.length === 0) {
+						alert('SYSTEM AUDIO NOT CAPTURED!\n\nIMPORTANT FOR WINDOWS:\n1. Choose "Entire Screen" or "Chrome Tab" (Window will not work).\n2. Check the toggle for "Share system audio" or "Share tab audio" before clicking Share.');
+						stream.getTracks().forEach(t => t.stop());
+						return;
+					}
+
+					audioSource = audioCtx.createMediaStreamSource(stream);
+					createAnalyser(audioSource, false);
+					setActiveBtn('btnScreen'); audioMode = 'screen';
+					document.getElementById('hMode').textContent = 'SYSTEM AUDIO';
+				} catch(e) { console.error(e); }
+			});
+
+			// Audio file
+			const fileInput = document.getElementById('fileInput');
+			const audioEl = document.getElementById('audioEl');
+			document.getElementById('btnFile').addEventListener('click', () => fileInput.click());
+			fileInput.addEventListener('change', (e) => { if (e.target.files.length) loadAudioFile(e.target.files[0]); });
+
+			let dragC = 0;
+			const dropZone = document.getElementById('dropZone');
+			document.addEventListener('dragenter', (e) => { e.preventDefault(); dragC++; dropZone.classList.add('active'); });
+			document.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+			document.addEventListener('dragleave', (e) => { e.preventDefault(); dragC--; if (dragC <= 0) { dragC = 0; dropZone.classList.remove('active'); }});
+			document.addEventListener('drop', (e) => {
+				e.preventDefault(); dragC = 0; dropZone.classList.remove('active');
+				if (e.dataTransfer.files.length && e.dataTransfer.files[0].type.startsWith('audio/')) loadAudioFile(e.dataTransfer.files[0]);
+			});
+
+			let audioElSource = null;
+			function loadAudioFile(file) {
+				ensureAudioCtx();
+				audioEl.pause();
+				audioEl.src = URL.createObjectURL(file);
+				audioEl.play();
+				if (!audioElSource) {
+					audioElSource = audioCtx.createMediaElementSource(audioEl);
+				}
+				audioSource = audioElSource;
+				createAnalyser(audioSource, true);
+				setActiveBtn('btnFile'); audioMode = 'file';
+				document.getElementById('hMode').textContent = file.name.slice(0, 22).toUpperCase();
+			}
+
+			function setActiveBtn(id) {
+				document.querySelectorAll('#audioPanel button').forEach(b => b.classList.remove('active'));
+				document.getElementById(id).classList.add('active');
+			}
+
+			// === FREQUENCY ANALYSIS ===
+			function analyzeFreqs() {
+				if (!analyser || !freqData) { bass = mids = highs = 0; return; }
+				analyser.getByteFrequencyData(freqData);
+				const bins = freqData.length;
+				const bassEnd = Math.floor(bins * 0.015);
+				const midEnd = Math.floor(bins * 0.18);
+				let bS = 0, mS = 0, hS = 0, bC = 0, mC = 0, hC = 0;
+				for (let i = 0; i < bins; i++) {
+					const v = freqData[i] / 255;
+					if (i <= bassEnd) { bS += v; bC++; }
+					else if (i <= midEnd) { mS += v; mC++; }
+					else { hS += v; hC++; }
+				}
+				const rB = bC > 0 ? bS / bC : 0;
+				const rM = mC > 0 ? mS / mC : 0;
+				const rH = hC > 0 ? hS / hC : 0;
+				bassPrev = bass;
+				bass = bass * 0.65 + rB * 0.35;
+				mids = mids * 0.7 + rM * 0.3;
+				highs = highs * 0.75 + rH * 0.25;
+			}
+
+			// Draw hand skeleton
+			function drawHandSkeleton(handLm) {
+				ctx.strokeStyle = 'rgba(0, 255, 100, 0.8)';
+				ctx.lineWidth = 2.5;
+				for (const [a, b] of HAND_CONNECTIONS) {
+					const pa = lmS(handLm[a]), pb = lmS(handLm[b]);
+					ctx.beginPath(); ctx.moveTo(pa.x, pa.y); ctx.lineTo(pb.x, pb.y); ctx.stroke();
+				}
+				for (let i = 0; i < 21; i++) {
+					const pt = lmS(handLm[i]);
+					ctx.fillStyle = '#ff2020';
+					ctx.beginPath(); ctx.arc(pt.x, pt.y, 4.5, 0, Math.PI * 2); ctx.fill();
+				}
+			}
+
+			// 3D fluid translucent purple audio mesh
+			function draw3DAudioMesh(ptA, ptB) {
+				const dx = ptB.x - ptA.x;
+				const dy = ptB.y - ptA.y;
+				const length = Math.hypot(dx, dy);
+				const angle = Math.atan2(dy, dx);
+
+				if (length < 10) return;
+
+				const numSegments = 32;
+				const numRadial = 12;
+
+				const nx = -Math.sin(angle);
+				const ny = Math.cos(angle);
+
+				const vertices = [];
+				const timeSpin = t * 1.5;
+
+				for (let s = 0; s <= numSegments; s++) {
+					const f = s / numSegments;
+					const cx = ptA.x + dx * f;
+					const cy = ptA.y + dy * f;
+
+					const pinch = Math.sin(f * Math.PI);
+					const bIndex = Math.floor(f * ((freqData ? freqData.length : 128) * 0.4));
+					const audioVal = freqData ? (freqData[bIndex] / 255) : 0;
+
+					const baseRadius = 15;
+					const audioBurst = (audioVal * 160 + bass * 80) * pinch;
+
+					const row = [];
+					for (let r = 0; r < numRadial; r++) {
+						const theta = (r / numRadial) * Math.PI * 2 + timeSpin + (f * Math.PI);
+						const noise = Math.sin(t * 3 + r * 1.5 + s * 0.5) * 15 * mids;
+						const radius = baseRadius * pinch + audioBurst + noise + 10;
+
+						const z = Math.sin(theta) * radius;
+						const ox = Math.cos(theta) * radius * nx;
+						const oy = Math.cos(theta) * radius * ny;
+
+						row.push({ x: cx + ox, y: cy + oy, z: z, s: s });
+					}
+					vertices.push(row);
+				}
+
+				const quads = [];
+				for (let s = 0; s < numSegments; s++) {
+					for (let r = 0; r < numRadial; r++) {
+						const nextR = (r + 1) % numRadial;
+						const v0 = vertices[s][r];
+						const v1 = vertices[s + 1][r];
+						const v2 = vertices[s + 1][nextR];
+						const v3 = vertices[s][nextR];
+
+						const avgZ = (v0.z + v1.z + v2.z + v3.z) / 4;
+						quads.push({ v0, v1, v2, v3, z: avgZ, s: s });
+					}
+				}
+
+				quads.sort((a, b) => Math.abs(a.z) - Math.abs(b.z));
+				ctx.globalCompositeOperation = 'screen';
+
+				for (const q of quads) {
+					ctx.beginPath();
+					ctx.moveTo(q.v0.x, q.v0.y);
+					ctx.lineTo(q.v1.x, q.v1.y);
+					ctx.lineTo(q.v2.x, q.v2.y);
+					ctx.lineTo(q.v3.x, q.v3.y);
+					ctx.closePath();
+
+					const depthNorm = clamp((q.z + 150) / 300, 0, 1);
+					const f = q.s / numSegments;
+					const hue = 250 + (f * 50) + bass * 30;
+
+					const alpha = clamp(0.15 + depthNorm * 0.4 + bass * 0.3, 0.05, 0.85);
+					const lit = clamp(35 + depthNorm * 40 + mids * 20, 20, 90);
+
+					ctx.fillStyle = `hsla(${hue}, 85%, ${lit}%, ${alpha})`;
+					ctx.fill();
+
+					ctx.strokeStyle = `hsla(${hue}, 95%, ${lit + 20}%, ${alpha * 0.7})`;
+					ctx.lineWidth = 1;
+					ctx.stroke();
+				}
+
+				ctx.globalCompositeOperation = 'source-over';
+			}
+
+			// Main loop
+			let lastTime = performance.now();
+
+			function drawFrame(now) {
+				const dt = Math.min(0.033, (now - lastTime) / 1000);
+				lastTime = now; t += dt;
+
+				analyzeFreqs();
+
+				document.getElementById('hBass').textContent = bass.toFixed(2);
+				document.getElementById('hMid').textContent = mids.toFixed(2);
+				document.getElementById('hHigh').textContent = highs.toFixed(2);
+				document.getElementById('barBass').style.height = (3 + bass * 55) + 'px';
+				document.getElementById('barMid').style.height = (3 + mids * 55) + 'px';
+				document.getElementById('barHigh').style.height = (3 + highs * 55) + 'px';
+
+				ctx.clearRect(0, 0, W, H);
+
+				ctx.save();
+				ctx.translate(W, 0); ctx.scale(-1, 1);
+				ctx.drawImage(vid, 0, 0, W, H);
+				ctx.restore();
+
+				ctx.fillStyle = `rgba(10, 0, 20, ${0.4 + bass * 0.3})`;
+				ctx.fillRect(0, 0, W, H);
+
+				if (currentHands.length === 2) {
+					const h1 = currentHands[0], h2 = currentHands[1];
+					const p1 = lmS(h1[9]);
+					const p2 = lmS(h2[9]);
+
+					drawHandSkeleton(h1);
+					drawHandSkeleton(h2);
+					draw3DAudioMesh(p1, p2);
+
+				} else if (currentHands.length === 1) {
+					const h1 = currentHands[0];
+					drawHandSkeleton(h1);
+
+					const p1 = lmS(h1[9]);
+					const p2 = {
+						x: p1.x + Math.sin(t * 1.5) * 300,
+						y: p1.y - 300 + Math.cos(t * 2) * 100
+					};
+					draw3DAudioMesh(p1, p2);
+				}
+
+				requestAnimationFrame(drawFrame);
+			}
+			requestAnimationFrame(drawFrame);
+
+			// Start camera
+			async function startEngine() {
+				try {
+					const hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+					hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
+					hands.onResults((res) => { currentHands = res.multiHandLandmarks || []; });
+
+					const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 1280 } } });
+					vid.srcObject = stream;
+					await vid.play();
+					loader.classList.add('hidden');
+
+					const camera = new Camera(vid, { onFrame: async () => { await hands.send({ image: vid }); }, width: 1280, height: 720 });
+					camera.start();
+				} catch (err) {
+					console.error(err);
+					loader.innerHTML = 'ENGINE INITIALIZATION FAILED';
+				}
+			}
+			startEngine();
+
+			// UI auto hide
+			let panelTimer = null;
+			const panel = document.getElementById('audioPanel');
+			function resetPanel() {
+				panel.classList.remove('hidden');
+				clearTimeout(panelTimer);
+				panelTimer = setTimeout(() => { if (audioMode !== 'none') panel.classList.add('hidden'); }, 6000);
+			}
+			document.addEventListener('mousemove', resetPanel);
+			document.addEventListener('click', resetPanel);
+
+		})();
+	</script>
+</body>
+</html>
